@@ -26,8 +26,8 @@ float confThreshold = 0.6;
 float nmsThreshold = 0;
 cv::Scalar mean = 0;
 bool swapRB = true;
-int inpWidth = 640;
-int inpHeight = 480;
+int inpWidth = 412;
+int inpHeight = 412;
 float scale = 0.00392;
 
 std::vector<std::string> rotulos;
@@ -36,14 +36,13 @@ void exibirConfiguracoesAcessiveis();
 bool coletarParametros();
 void carregarConfiguracoes();
 void alterarLimiarConfianca(int pos, void *);
-
-inline void preprocess(const cv::Mat &frame, cv::dnn::Net &net,
-                       cv::Size inpSize, float scale, const cv::Scalar &mean,
-                       bool swapRB);
+inline void addImagemARedeNeural(const cv::Mat &frame, cv::dnn::Net &net,
+                                 cv::Size inpSize, float scale,
+                                 const cv::Scalar &mean, bool swapRB);
 void postprocess(cv::Mat &frame, const std::vector<cv::Mat> &out,
                  cv::dnn::Net &net, int backend);
-void drawPred(int classId, float conf, int left, int top, int right, int bottom,
-              cv::Mat &frame);
+void exibirPredicao(int classId, float conf, int left, int top, int right,
+                    int bottom, cv::Mat &frame);
 
 int main() {
   // Exibe tipos de processamentos suportados pelo seu computador
@@ -84,7 +83,7 @@ int main() {
 
   // Carrega o arquivo ou a câmera de vídeo
   cv::VideoCapture videoCap;
-  if (tipo.compare("2") == 0) {
+  if (tipo.compare("1") != 0) {
     // Carrega arquivo
     videoCap.open(tipo);
   } else {
@@ -106,10 +105,12 @@ int main() {
 
     if (!frame.empty()) {
 
-      preprocess(frame, net, cv::Size(inpWidth, inpHeight), scale, mean,
-                 swapRB);
+      addImagemARedeNeural(frame, net, cv::Size(inpWidth, inpHeight), scale,
+                           mean, swapRB);
 
       std::vector<cv::Mat> outs;
+      // Executa a rede neural
+      // Para computar as saídas
       net.forward(outs, outNames);
 
       postprocess(frame, outs, net, backendPreferencial);
@@ -153,6 +154,7 @@ bool coletarParametros() {
 
   if (tipo.compare("2") == 0) {
     std::cout << "Informe o caminho do arquivo de vídeo:" << std::endl;
+    std::cin >> tipo;
     try {
       tipo = cv::samples::findFile(tipo);
     } catch (cv::Exception ex) {
@@ -229,27 +231,34 @@ void carregarConfiguracoes() {
 
 void alterarLimiarConfianca(int pos, void *) { confThreshold = pos * 0.01f; }
 
-inline void preprocess(const cv::Mat &frame, cv::dnn::Net &net,
-                       cv::Size inpSize, float scale, const cv::Scalar &mean,
-                       bool swapRB) {
-  static cv::Mat blob;
-  // Create a 4D blob from a frame.
+inline void addImagemARedeNeural(const cv::Mat &frame, cv::dnn::Net &net,
+                                 cv::Size inpSize, float scale,
+                                 const cv::Scalar &mean, bool swapRB) {
+  static cv::Mat imageBlob;
+  // Converte o frame da imagem para BLOB.
+  // Redes neurais utilizando BLOBS como entra de informação.
   if (inpSize.width <= 0)
     inpSize.width = frame.cols;
   if (inpSize.height <= 0)
     inpSize.height = frame.rows;
-  cv::dnn::blobFromImage(frame, blob, 1.0, inpSize, cv::Scalar(), swapRB, false,
-                         CV_8U);
+  cv::dnn::blobFromImage(frame, imageBlob, 1.0, inpSize, cv::Scalar(), swapRB,
+                         false, CV_8U);
 
-  // Run a model.
-  net.setInput(blob, "", scale, mean);
-  if (net.getLayer(0)->outputNameToIndex("im_info") !=
-      -1) // Faster-RCNN or R-FCN
-  {
-    resize(frame, frame, inpSize);
+  std::string camada = "";
+  // Define o novo valor de entrada para a rede neural
+  net.setInput(imageBlob, camada, scale, mean);
+
+  // Verifica se possui a camada im_info. Essa camada é utilizada nas técncias
+  // Faster-RCNN or R-FCN
+  if (net.getLayer(0)->outputNameToIndex("im_info") != -1) {
+    // Redimensiona a imagem para ter o mesmo tamanho do inputsize
+    cv::resize(frame, frame, inpSize);
+
+    // Adiciona informação sobre a dimenção da imagem na camada im_info
     cv::Mat imInfo =
         (cv::Mat_<float>(1, 3) << inpSize.height, inpSize.width, 1.6f);
-    net.setInput(imInfo, "im_info");
+    std::string camada = "im_info";
+    net.setInput(imInfo, camada);
   }
 }
 
@@ -361,30 +370,34 @@ void postprocess(cv::Mat &frame, const std::vector<cv::Mat> &outs,
 
   for (size_t idx = 0; idx < boxes.size(); ++idx) {
     cv::Rect box = boxes[idx];
-    drawPred(classIds[idx], confidences[idx], box.x, box.y, box.x + box.width,
-             box.y + box.height, frame);
+    exibirPredicao(classIds[idx], confidences[idx], box.x, box.y,
+                   box.x + box.width, box.y + box.height, frame);
   }
 }
+/**
+ * Cria um retangulo com a informação do rótulo e a precição/confianã da
+ * predição
+ */
+void exibirPredicao(int classId, float conf, int left, int top, int right,
+                    int bottom, cv::Mat &frame) {
 
-void drawPred(int classId, float conf, int left, int top, int right, int bottom,
-              cv::Mat &frame) {
-  rectangle(frame, cv::Point(left, top), cv::Point(right, bottom),
-            cv::Scalar(0, 255, 0));
+  cv::rectangle(frame, cv::Point(left, top), cv::Point(right, bottom),
+                cv::Scalar(0, 255, 0));
 
-  std::string label = cv::format("%.2f", conf);
+  std::string rotulo = cv::format("%.2f", conf);
   if (!rotulos.empty()) {
     CV_Assert(classId < (int)rotulos.size());
-    label = rotulos[classId] + ": " + label;
+    rotulo = rotulos[classId] + ": " + rotulo;
   }
 
   int baseLine;
   cv::Size labelSize =
-      getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
+      cv::getTextSize(rotulo, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
 
   top = cv::max(top, labelSize.height);
-  rectangle(frame, cv::Point(left, top - labelSize.height),
-            cv::Point(left + labelSize.width, top + baseLine),
-            cv::Scalar::all(255), cv::FILLED);
-  putText(frame, label, cv::Point(left, top), cv::FONT_HERSHEY_SIMPLEX, 0.5,
-          cv::Scalar());
+  cv::rectangle(frame, cv::Point(left, top - labelSize.height),
+                cv::Point(left + labelSize.width, top + baseLine),
+                cv::Scalar::all(255), cv::FILLED);
+  cv::putText(frame, rotulo, cv::Point(left, top), cv::FONT_HERSHEY_SIMPLEX,
+              0.5, cv::Scalar());
 }
