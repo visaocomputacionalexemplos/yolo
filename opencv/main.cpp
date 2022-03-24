@@ -39,8 +39,9 @@ void alterarLimiarConfianca(int pos, void *);
 inline void addImagemARedeNeural(const cv::Mat &frame, cv::dnn::Net &net,
                                  cv::Size inpSize, float scale,
                                  const cv::Scalar &mean, bool swapRB);
-void postprocess(cv::Mat &frame, const std::vector<cv::Mat> &out,
-                 cv::dnn::Net &net, int backend);
+void processarSaidasDaRedeNeural(cv::Mat &frame,
+                                 const std::vector<cv::Mat> &out,
+                                 cv::dnn::Net &net, int backend);
 void exibirPredicao(int classId, float conf, int left, int top, int right,
                     int bottom, cv::Mat &frame);
 
@@ -64,7 +65,7 @@ int main() {
   cv::dnn::Net net = cv::dnn::readNet(modelCaminho, configCaminho);
   // Tipo de processamento interno preferencial: Opencv, VKCOM, Halide, ...
   net.setPreferableBackend(backendPreferencial);
-  // Tecnica de computacao dos dados: CPU, CUDA,....
+  // Tecnica de computacao dos dados preferencia: CPU, CUDA,....
   net.setPreferableTarget(targetPreferencial);
   std::vector<cv::String> outNames = net.getUnconnectedOutLayersNames();
 
@@ -113,7 +114,7 @@ int main() {
       // Para computar as saídas
       net.forward(outs, outNames);
 
-      postprocess(frame, outs, net, backendPreferencial);
+      processarSaidasDaRedeNeural(frame, outs, net, backendPreferencial);
 
       // Adiciona informações úteis
       std::vector<double> layersTimes;
@@ -262,9 +263,12 @@ inline void addImagemARedeNeural(const cv::Mat &frame, cv::dnn::Net &net,
   }
 }
 
-void postprocess(cv::Mat &frame, const std::vector<cv::Mat> &outs,
-                 cv::dnn::Net &net, int backend) {
+void processarSaidasDaRedeNeural(cv::Mat &frame,
+                                 const std::vector<cv::Mat> &outs,
+                                 cv::dnn::Net &net, int backend) {
+  // Coleta as camadas de fora. Últimas camadas da rede neural
   static std::vector<int> outLayers = net.getUnconnectedOutLayers();
+  // Tipode de camada de saida.
   static std::string outLayerType = net.getLayer(outLayers[0])->type;
 
   std::vector<int> classIds;
